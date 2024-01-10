@@ -1,32 +1,63 @@
 import torch
 import time
-
+from torchvision import transforms, datasets
+from TinyEyesTransformOOPcuda import TinyEyes
+import os
+from PIL import Image
+from torchvision.utils import save_image
 
 def main():
-    nits = 100
-    start = time.time()
-    for it in range(nits):
-        x = torch.randn(1000, 1000, device='cuda')
-        y = torch.randn(1000, 1000, device='cuda')
-        z = torch.matmul(x, y)
-    print ("Method A: Time per iteration: ", (time.time() - start) / nits)
+    # Timing different ways of calculating a random matrix and multiplying
+    # Only Method A accelerates well on GPU as others all have CPU bottleneck
+    traindir =  '/data/ILSVRC2012/val_in_folders'
 
-    for it in range(nits):
-        x = torch.randn(1000, 1000).cuda()
-        y = torch.randn(1000, 1000).cuda()
-        z = torch.matmul(x, y)
-    print ("Method B: Time per iteration: ", (time.time() - start) / nits)
+    # Define instance of TinyEyes class
+    for age in ['week0','week4','week8','week12']:
+        print(f'age {age}')
+        TinyEyes_withParams = TinyEyes(age=age, width=15.8, dist=60, imp='gpu')
 
-    x = torch.randn(nits,1000, 1000).cuda()
-    y = torch.randn(nits,1000, 1000).cuda()
-    z = torch.matmul(x, y)
-    print ("Method C: Time per iteration: ", (time.time() - start) / nits)
+        train_transforms = transforms.Compose([
+            transforms.RandomResizedCrop(224),
+            transforms.ToTensor(),
+        ])
+        train_dataset = datasets.ImageFolder(
+            traindir,
+            train_transforms
+            )
+        
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=256, shuffle=True,
+            num_workers=16, sampler=None)
 
-    x = [torch.randn(1000, 1000).cuda() for it in range(nits)]
-    y = [torch.randn(1000, 1000).cuda() for it in range(nits)]
-    for it in range(nits):
-        z = torch.matmul(x[it], y[it])
-    print ("Method D: Time per iteration: ", (time.time() - start) / nits)
+        model = torch.nn.Sequential(
+            TinyEyes_withParams,  # Add TinyEyes Transform to Model for GPU Implementation
+        )
+        
+        data_time = []
+        end = time.time()
 
-if __name__ == '__main__':
+        nits = 4
+
+
+
+        model.cuda()
+
+        os.makedirs('example_images', exist_ok=True)
+        print(len(train_loader))
+        for batch_idx, (images, target) in enumerate(train_loader):
+            if batch_idx>=nits:
+                break
+            images = images.cuda('cuda', non_blocking=True)
+            output = model(images)
+
+            save_image(output, f'example_images/age-{age}_batch-{batch_idx}_example.jpg')
+            
+            # measure data loading time
+            data_time.append(time.time() - end)
+            print(f' batch {batch_idx} time {data_time[-1]}')
+            end = time.time()
+
+        print(data_time)
+
+if __name__ == "__main__":
     main()
